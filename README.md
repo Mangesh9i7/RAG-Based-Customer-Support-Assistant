@@ -158,7 +158,11 @@ RAG Based Customer Support Assistant/
 
 ```bash
 git clone https://github.com/Mangesh9i7/RAG-Based-Customer-Support-Assistant.git
+<<<<<<< HEAD
 cd "RAG Based Customer Support Assistant"
+=======
+cd RAG Based Customer Support Assistant
+>>>>>>> e93b61c (new commit)
 ```
 
 ### 2. Create a Virtual Environment (Recommended)
@@ -330,14 +334,6 @@ The `docs/` folder contains comprehensive design artifacts:
 - [ ] **Re-ranking**: Integrate a cross-encoder re-ranker to improve retrieval quality.
 - [ ] **Dockerization**: Containerize the application for seamless deployment.
 - [ ] **CI/CD Pipeline**: Add automated testing and deployment via GitHub Actions.
-
----
-
-## 📄 License
-
-_Add your license here (e.g., MIT, Apache 2.0)_
-
----
 
 ## 🙋 Support
 
