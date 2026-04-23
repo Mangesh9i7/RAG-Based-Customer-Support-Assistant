@@ -158,7 +158,11 @@ RAG Based Customer Support Assistant/
 
 ```bash
 git clone https://github.com/Mangesh9i7/RAG-Based-Customer-Support-Assistant.git
+<<<<<<< HEAD
 cd RAG Based Customer Support Assistant
+=======
+cd "RAG Based Customer Support Assistant"
+>>>>>>> 53be659b64fc807f0f014a83f212b664438cf197
 ```
 
 ### 2. Create a Virtual Environment (Recommended)
