@@ -7,11 +7,11 @@ load_dotenv()
 from src.graph import app
 
 if __name__ == "__main__":
-    print("Welcome to the Free Groq-powered RAG system!")
+    print("Welcome! How can i help you?")
     print("Type 'quit' or 'exit' to stop.\n")
     
     while True:
-        question = input("Ask a question: ")
+        question = input("User:-  ")
         if question.lower() in ['quit', 'exit']:
             break
         
