@@ -157,7 +157,7 @@ RAG Based Customer Support Assistant/
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Mangesh9i7/RAG-Based-Customer-Support-Assistant.git
 cd "RAG Based Customer Support Assistant"
 ```
 
