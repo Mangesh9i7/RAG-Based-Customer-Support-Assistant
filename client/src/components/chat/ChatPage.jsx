@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import "./ChatPage.css";
 
+const API_BASE_URL = "http://localhost:8000";
 const CHATS_STORAGE_KEY = "rag_chat_history";
 
 export default function ChatPage() {
@@ -115,7 +116,7 @@ export default function ChatPage() {
     setIsLoading(true);
 
     try {
-      const response = await fetch("/chat", {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: userMessage }),
