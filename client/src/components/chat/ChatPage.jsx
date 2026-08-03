@@ -242,7 +242,10 @@ export default function ChatPage() {
                 ></i>
               </div>
               <h3>Welcome to Support AI</h3>
-              <p>Ask me anything about tickets or documentation.</p>
+              <p>
+                Need support? Ask me anything about tickets or service issues,
+                and I’ll guide you step by step..
+              </p>
             </div>
           ) : (
             messages.map((message) => (
