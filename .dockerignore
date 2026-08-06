@@ -1,0 +1,43 @@
+# Environment & Secrets
+RAG_Backend/.env
+.env
+.env.*
+*.env
+
+# Dependencies & Build Artifacts (Frontend)
+client/node_modules
+client/dist
+
+# Caches & Virtual Environments (Backend)
+RAG_Backend/venv
+**/__pycache__
+*.py[cod]
+RAG_Backend/.pytest_cache
+
+# NOTE: RAG_Backend/vector_db/ is intentionally NOT listed here.
+# The prebuilt FAISS index (index.faiss, index.pkl) is shipped inside
+# the image so the container starts fast and doesn't need to re-run
+# ingestion + call the embeddings API on every startup.
+
+# Documentation & Design Docs (not needed at runtime)
+RAG_Backend/docs
+README.md
+
+# Version Control
+.git
+.gitignore
+
+# IDE & OS System Files
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# Docker Configuration Files
+Dockerfile
+docker-compose.yml
+client/Dockerfile
+client/.dockerignore
+client/nginx.conf
+RAG_Backend/Dockerfile
+RAG_Backend/.dockerignore

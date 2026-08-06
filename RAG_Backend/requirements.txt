@@ -10,3 +10,4 @@ faiss-cpu
 pypdf
 requests
 python-dotenv
+langchain-huggingface
