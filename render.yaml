@@ -1,0 +1,31 @@
+services:
+  # 1. The FastAPI Backend (Uses your Free Web Service slot)
+  - type: web
+    name: rag-backend
+    env: docker
+    rootDir: RAG_Backend
+    plan: free
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false # You will enter this securely in the Render dashboard
+      - key: HF_TOKEN
+        sync: false # You will enter this securely in the Render dashboard
+      - key: ALLOWED_ORIGIN
+        fromService:
+          type: web
+          name: rag-frontend
+          envVarKey: RENDER_EXTERNAL_URL
+
+  # 2. The React Frontend (Uses unlimited Free Static Sites)
+  - type: web
+    name: rag-frontend
+    env: static
+    rootDir: client
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: rag-backend
+          envVarKey: RENDER_EXTERNAL_URL
