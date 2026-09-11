@@ -25,7 +25,7 @@ DATA_FILE_PATH = _find_data_file()
 
 # Model configurations
 RETRIEVER_K = 3
-GROQ_MODEL_NAME = "allam-2-7b"
+GROQ_MODEL_NAME = "openai/gpt-oss-20b"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 
