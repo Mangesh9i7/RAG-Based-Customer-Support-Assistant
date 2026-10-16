@@ -1,13 +1,14 @@
 import os
 from dotenv import load_dotenv
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEndpointEmbeddings
 from src.config import VECTOR_STORE_DIR, RETRIEVER_K, EMBEDDING_MODEL_NAME
 
 load_dotenv()
 
 _retriever = None  
+
+from langchain_huggingface import HuggingFaceEmbeddings
+
 
 
 def get_retriever():
@@ -19,11 +20,12 @@ def get_retriever():
     #     api_key=os.environ.get("HF_TOKEN"),  
     #     model_name=f"sentence-transformers/{EMBEDDING_MODEL_NAME}"
     # )
-    embeddings = HuggingFaceEndpointEmbeddings(
-        model=f"sentence-transformers/{EMBEDDING_MODEL_NAME}",
-        task="feature-extraction",
-        huggingfacehub_api_token=os.environ.get("HF_TOKEN"),
-    )
+    # embeddings = HuggingFaceEmbeddings(
+    #     model=f"sentence-transformers/{EMBEDDING_MODEL_NAME}",
+    #     task="feature-extraction",
+    #     huggingfacehub_api_token=os.environ.get("HF_TOKEN"),
+    # )
+    embeddings = HuggingFaceEmbeddings(model_name=f"sentence-transformers/{EMBEDDING_MODEL_NAME}")
 
     index_path = os.path.join(VECTOR_STORE_DIR, "index.faiss")
 
