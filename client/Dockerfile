@@ -19,5 +19,5 @@ FROM nginx:alpine
 # Copy built files from Vite to nginx html folder
 COPY --from=build /app/dist /usr/share/nginx/html
 
-EXPOSE 3000
+EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

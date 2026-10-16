@@ -10,10 +10,17 @@ from src.vector_store import get_retriever
 from src.prompts import rag_prompt
 from src.config import GROQ_MODEL_NAME
 
-# 1. Initialize the free Groq LLM (lightweight — just an HTTP client, no local weights)
+groq_api_key = os.environ.get("GROQ_API_KEY")
+if not groq_api_key:
+    raise RuntimeError("GROQ_API_KEY must be configured before starting the API.")
+
 llm = ChatGroq(
     model=GROQ_MODEL_NAME,
-    api_key=os.environ.get("GROQ_API_KEY")
+    api_key=groq_api_key,
+    max_tokens=512,
+    temperature=0,
+    timeout=30,
+    max_retries=2,
 )
 
 
@@ -22,13 +29,11 @@ def format_docs(docs):
 
 
 def retrieve_and_format(question):
-
     retriever = get_retriever()
     docs = retriever.invoke(question)
     return format_docs(docs)
 
 
-# 2. Build the LangChain executable app (retrieval is now lazy, see above)
 app = (
     {"context": RunnableLambda(retrieve_and_format), "question": RunnablePassthrough()}
     | rag_prompt

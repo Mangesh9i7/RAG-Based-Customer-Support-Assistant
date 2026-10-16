@@ -3,7 +3,7 @@ services:
     build: ./RAG_Backend
     container_name: backend
     ports:
-      - "5000:5000"
+      - "5000:10000"
     # Ensure your .env variables are loaded or defined here if needed
     env_file:
       - ./RAG_Backend/.env

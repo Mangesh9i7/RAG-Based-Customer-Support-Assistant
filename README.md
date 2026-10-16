@@ -44,7 +44,7 @@ The assistant is explicitly designed with a **human-in-the-loop (HITL) fallback*
 ## Key Features
 
 - 🔍 **Retrieval-Augmented Generation** — answers are grounded in your own documents, not just the LLM's training data.
-- 📄 **Multi-format ingestion** — automatically loads `.pdf`, `.txt`, `.docx`/`.doc`, or `.csv` files from `data/raw/`.
+- 📄 **Multi-format ingestion helpers** — supports `.pdf`, `.txt`, `.docx`/`.doc`, or `.csv` when rebuilding the bundled index offline.
 - ⚡ **Streaming responses** — tokens are streamed from the LLM through FastAPI to the browser as they're generated, not returned all at once.
 - 🤝 **Human-in-the-loop fallback** — when the knowledge base doesn't contain the answer, the assistant says so explicitly and signals a handoff, instead of hallucinating.
 - 💬 **Casual conversation handling** — greetings and small talk are handled naturally without forcing a document lookup.
@@ -67,8 +67,8 @@ The assistant is explicitly designed with a **human-in-the-loop (HITL) fallback*
                                     ┌────────────────────────────┼────────────────────────────┐
                                     │                             │                             │
                           ┌─────────▼─────────┐        ┌──────────▼──────────┐       ┌──────────▼──────────┐
-                          │   FAISS retriever  │        │  HF embedding model  │       │   Groq LLM (Llama)   │
-                          │  (local vector db) │        │ (Inference API call) │       │  llama-3.1-8b-instant│
+                          │   FAISS retriever  │        │  FastEmbed ONNX      │       │   Groq hosted LLM    │
+                          │ (verified local idx)│       │   (local CPU)        │       │ openai/gpt-oss-20b  │
                           └────────────────────┘        └──────────────────────┘       └───────────────────────┘
 ```
 
@@ -76,9 +76,9 @@ The assistant is explicitly designed with a **human-in-the-loop (HITL) fallback*
 
 1. The user asks a question in the chat UI.
 2. The frontend sends `POST /chat` (proxied by nginx to the backend in the Docker Compose setup).
-3. The question is embedded and compared against a FAISS vector index built from your knowledge base.
+3. The question is embedded by the pinned ONNX export of the same MiniLM model and compared against the bundled FAISS index.
 4. The top-_k_ matching chunks are injected into a structured prompt alongside the question.
-5. The Groq-hosted Llama model generates an answer grounded in that context, streamed back token by token.
+5. The Groq-hosted model generates an answer grounded in that context, streamed back token by token.
 6. If the retrieved context doesn't answer the question, the model returns a fixed hand-off message instead of guessing.
 
 ## Tech Stack
@@ -88,9 +88,9 @@ The assistant is explicitly designed with a **human-in-the-loop (HITL) fallback*
 | Frontend         | React 19, React Router, Vite, vanilla CSS                                                              |
 | Backend          | FastAPI, Uvicorn, Pydantic                                                                             |
 | Orchestration    | LangChain (LCEL — LangChain Expression Language)                                                       |
-| LLM              | Groq API — `llama-3.1-8b-instant`                                                                      |
-| Embeddings       | Hugging Face Inference API — `sentence-transformers/all-MiniLM-L6-v2`                                  |
-| Vector store     | FAISS (local, on-disk index)                                                                           |
+| LLM              | Groq API — `openai/gpt-oss-20b`                                                                        |
+| Embeddings       | FastEmbed + ONNX Runtime — pinned `sentence-transformers/all-MiniLM-L6-v2` export                         |
+| Vector store     | FAISS (bundled, integrity-verified, read-only index)                                                    |
 | Document loaders | `PyPDFLoader`, `TextLoader`, `UnstructuredWordDocumentLoader`, `CSVLoader` (via `langchain-community`) |
 | Serving          | nginx (frontend), Uvicorn (backend)                                                                    |
 | Containerization | Docker, Docker Compose                                                                                 |
@@ -116,14 +116,14 @@ RAG-Based-Customer-Support-Assistant/
     ├── requirements.txt
     ├── data/raw/                 # Your source knowledge base documents go here
     ├── docs/                     # Design docs (HLD, LLD, technical documentation)
-    ├── vector_db/                # Generated FAISS index (index.faiss, index.pkl)
+    ├── vector_db/                # Bundled FAISS index (index.faiss, index.pkl)
     └── src/
         ├── api.py                # FastAPI app: /chat, /health routes
         ├── config.py             # Paths, model names, retriever settings
         ├── graph.py              # LCEL chain: retrieve → prompt → LLM → parse
         ├── ingestr.py            # Document loading + chunking
         ├── prompts.py            # RAG system prompt (incl. HITL fallback logic)
-        └── vector_store.py       # FAISS index build/load + retriever
+        └── vector_store.py       # FAISS integrity checks + local ONNX embedding retriever
 ```
 
 ## Getting Started
@@ -133,7 +133,6 @@ RAG-Based-Customer-Support-Assistant/
 - Python 3.10+
 - Node.js 20+
 - A free [Groq API key](https://console.groq.com/keys)
-- A free [Hugging Face access token](https://huggingface.co/settings/tokens) (used for the embeddings Inference API call)
 - Docker + Docker Compose (optional, for containerized setup)
 
 ### Local Setup (without Docker)
@@ -158,17 +157,14 @@ Create a `.env` file inside `RAG_Backend/`:
 
 ```env
 GROQ_API_KEY=your_groq_api_key_here
-HF_TOKEN=your_huggingface_token_here
 ALLOWED_ORIGIN=http://localhost:5173
 ```
 
-Add at least one knowledge base document to `RAG_Backend/data/raw/` (see [Adding Your Own Knowledge Base](#adding-your-own-knowledge-base)), then start the API:
+The repository includes a prebuilt FAISS index and its source data. Start the API:
 
 ```bash
 uvicorn src.api:api --reload --port 5000
 ```
-
-The first request will build the FAISS index automatically if one doesn't already exist in `vector_db/`.
 
 **3. Frontend setup**
 
@@ -176,7 +172,7 @@ In a separate terminal:
 
 ```bash
 cd client
-npm install
+npm ci
 npm run dev
 ```
 
@@ -205,22 +201,24 @@ The frontend container runs nginx, which serves the built React app and transpar
 
 ## Configuration
 
-All backend configuration is via environment variables (`RAG_Backend/.env`):
+Backend configuration is via `RAG_Backend/.env`; `VITE_API_URL` is a frontend build variable:
 
 | Variable         | Required | Description                                                                                         |
 | ---------------- | -------- | --------------------------------------------------------------------------------------------------- |
-| `GROQ_API_KEY`   | Yes      | API key for Groq, used to call the `llama-3.1-8b-instant` model.                                    |
-| `HF_TOKEN`       | Yes      | Hugging Face access token, used for the embeddings Inference API call.                              |
-| `ALLOWED_ORIGIN` | No       | CORS-allowed origin for the backend. Defaults to `*` — set explicitly in any non-local environment. |
+| `GROQ_API_KEY`   | Yes      | API key for Groq, used for `openai/gpt-oss-20b`.                                                     |
+| `ALLOWED_ORIGIN` | No       | Comma-separated CORS origin allowlist. Defaults to `http://localhost:5173`.                           |
+| `VITE_API_URL`   | Deploy   | Backend base URL for the static frontend build; leave unset for same-origin/local development.        |
 
 Retrieval and model behavior are configured in `RAG_Backend/src/config.py`:
 
 | Setting                | Default                | Description                                                                 |
 | ---------------------- | ---------------------- | --------------------------------------------------------------------------- |
 | `RETRIEVER_K`          | `3`                    | Number of chunks retrieved per query.                                       |
-| `GROQ_MODEL_NAME`      | `llama-3.1-8b-instant` | LLM used for generation.                                                    |
-| `EMBEDDING_MODEL_NAME` | `all-MiniLM-L6-v2`     | Sentence-transformers model used for embeddings.                            |
-| Chunk size / overlap   | `1000` / `150`         | Set in `src/ingestr.py`, controls how documents are split before embedding. |
+| `GROQ_MODEL_NAME`      | `openai/gpt-oss-20b`   | LLM used for generation; response length is capped at 512 tokens.           |
+| `EMBEDDING_MODEL_NAME` | `all-MiniLM-L6-v2`     | Local, pinned ONNX embedding model paired with the bundled vector index.     |
+| `RETRIEVER_K`          | `3`                    | Number of local FAISS chunks retrieved per query.                            |
+
+The API validates question length, rate-limits requests per client, and limits concurrent model streams. Rate-limit state is process-local and is not shared across multiple service instances.
 
 ## How It Works
 
@@ -243,6 +241,8 @@ The prompt (`src/prompts.py`) instructs the model to internally classify each qu
 
 This keeps hallucination-avoidance inside the prompt design itself rather than requiring a separate intent-classification model, which keeps the system simple while still giving predictable, auditable behavior for the "don't know the answer" case.
 
+The prompt instructions are sent as a system message, while retrieved documents are explicitly marked as untrusted reference data. This is a defense-in-depth measure, not a guarantee against all prompt injection.
+
 ## API Reference
 
 ### `POST /chat`
@@ -257,7 +257,9 @@ Streams a response to a user question.
 }
 ```
 
-**Response:** `text/plain`, streamed in chunks as the model generates tokens.
+Questions must contain 1-1,500 non-whitespace characters. Unknown fields and request bodies larger than 8 KiB are rejected. Requests are rate-limited to 20 per client per minute, with at most four concurrent model streams per process.
+
+**Response:** `text/plain`, streamed in chunks as the model generates tokens. Rate-limited requests return `429`; oversized bodies return `413`; overloaded requests return `503`.
 
 ### `GET /health`
 
@@ -271,39 +273,41 @@ Simple liveness check.
 
 ## Adding Your Own Knowledge Base
 
-Drop a single supported file into `RAG_Backend/data/raw/`:
+The runtime uses the committed FAISS index; adding a file to `RAG_Backend/data/raw/` does not rebuild or replace it. The ingestion helpers support:
 
 - `.pdf`
 - `.txt`
 - `.docx` / `.doc`
 - `.csv`
 
-The backend automatically picks up the first supported file it finds — no filename or config changes needed. On first run (or after deleting `RAG_Backend/vector_db/`), it will chunk the document, embed it, and build a fresh FAISS index.
+To change the knowledge base, rebuild the vector index in a trusted environment using the same embedding model, then deliberately update the bundled `index.faiss` and `index.pkl` files and their pinned SHA-256 values in `RAG_Backend/src/vector_store.py`. The service will fail closed if either artifact is missing or differs from its pinned digest. Do not disable that verification or load untrusted pickle files.
 
-> To rebuild the index after updating your knowledge base, delete the contents of `RAG_Backend/vector_db/` and restart the backend — it will regenerate the index automatically on the next request.
+Docker builds include the pinned ONNX embedding model. Local development downloads the same public model revision on the first retrieval; no Hugging Face token or database is required.
 
 ## Deployment
 
 Two deployment paths are supported out of the box:
 
 - **`docker-compose.yml`** — frontend and backend as separate containers, nginx reverse proxy in front. Best for local development and any environment where you control container orchestration (VPS, Docker Swarm, Kubernetes with adaptation).
-- **Root `Dockerfile`** — a single combined image that builds the React app and serves it directly from FastAPI on port `7860`. Designed for platforms that expect one Dockerfile at the repo root and a single exposed port, such as Hugging Face Spaces.
+- **Root `Dockerfile`** — a single combined image that builds the React app and serves it directly from FastAPI on the platform-provided port (default `10000`).
 
 Use whichever matches your target platform — they are independent of each other and not meant to be used together.
 
 ## Known Limitations
 
 - **No conversation memory** — each request is stateless; the model does not see prior turns in the conversation.
-- **Chat history is client-side only** — stored in the browser's `localStorage`, so it does not persist across devices or survive clearing browser data.
-- **No authentication or rate limiting** on the `/chat` endpoint by default — add this before exposing the API publicly, since every request calls a paid LLM API.
-- **Single-document knowledge base** — the ingestion logic picks up the _first_ supported file in `data/raw/`; it is not designed to merge multiple source documents automatically.
+- **Chat history is in-memory only** — it is cleared when the page is refreshed and is not stored in a database or browser storage.
+- **Public chat endpoint** — per-client rate and concurrency limits mitigate abuse, but do not identify end users; add an identity or anti-bot provider if access must be restricted.
+- **Rate limits are per process** — they are not shared across multiple service instances and reset on restart.
+- **Remote embeddings require Hugging Face availability and a valid token**; the Render container does not download or run embedding model weights locally.
+- **Static FAISS index** — index updates are a deliberate build/deploy operation, not an automatic runtime action.
 - **No automated tests or CI** are currently included.
 
 ## Roadmap
 
 - [ ] Conversation memory across turns
 - [ ] Server-side chat history persistence
-- [ ] Authentication and rate limiting on the API
+- [ ] User identity / anti-bot protection beyond per-process rate limiting
 - [ ] Admin endpoint to trigger re-indexing without manual file deletion
 - [ ] Automated tests and CI pipeline
 - [ ] Hybrid retrieval (keyword + vector) for better recall on exact terms like order numbers or error codes

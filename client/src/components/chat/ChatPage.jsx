@@ -1,35 +1,42 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./ChatPage.css";
 
-const CHATS_STORAGE_KEY = "rag_chat_history";
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
+
+const suggestedQuestions = [
+  "How do I track my order?",
+  "How do I return an item?",
+  "How do I update my account details?",
+];
+
+const renderMessageContent = (content, role) => {
+  if (role !== "ai") return content;
+
+  return content
+    .replace(/[ \t]+(?=\d+\.\s)/g, "\n")
+    .split("\n")
+    .map((line, lineIndex) => (
+      <span key={lineIndex}>
+        {lineIndex > 0 && <br />}
+        {line.split(/(\*\*[^*]+\*\*)/g).map((part, partIndex) =>
+          part.startsWith("**") && part.endsWith("**") ? (
+            <strong key={partIndex}>{part.slice(2, -2)}</strong>
+          ) : (
+            part
+          ),
+        )}
+      </span>
+    ));
+};
 
 export default function ChatPage() {
-  // State
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [chats, setChats] = useState([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeChatId, setActiveChatId] = useState(null);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
-
-  // Persistence and Auto-scroll Effects
-  useEffect(() => {
-    const savedChats = localStorage.getItem(CHATS_STORAGE_KEY);
-    if (savedChats) {
-      try {
-        setChats(JSON.parse(savedChats));
-      } catch (e) {
-        console.error("Failed to parse saved chats:", e);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(CHATS_STORAGE_KEY, JSON.stringify(chats));
-  }, [chats]);
+  const requestControllerRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -37,259 +44,253 @@ export default function ChatPage() {
 
   useEffect(() => {
     inputRef.current?.focus();
+    return () => requestControllerRef.current?.abort();
   }, []);
 
-  // Helper Functions
-  const generateId = () =>
-    Date.now().toString(36) + Math.random().toString(36).substr(2);
-  const formatTimestamp = (timestamp) =>
-    new Date(timestamp).toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-
-  const handleNewChat = () => {
+  const handleNewConversation = () => {
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    setIsLoading(false);
     setMessages([]);
-    setActiveChatId(null);
-    setSidebarOpen(false);
+    setInputValue("");
     inputRef.current?.focus();
   };
 
-  const handleSelectChat = (chatId) => {
-    const chat = chats.find((c) => c.id === chatId);
-    if (chat) {
-      setMessages(chat.messages);
-      setActiveChatId(chatId);
-      setSidebarOpen(false);
-    }
-  };
-
-  const handleDeleteChat = (e, chatId) => {
-    e.stopPropagation();
-    const newChats = chats.filter((c) => c.id !== chatId);
-    setChats(newChats);
-    if (activeChatId === chatId) handleNewChat();
-  };
-
-  const saveCurrentChat = (updatedMessages) => {
-    if (updatedMessages.length === 0) return;
-    const firstUserMessage = updatedMessages.find((m) => m.role === "user");
-    const title = firstUserMessage
-      ? firstUserMessage.content.slice(0, 30) +
-        (firstUserMessage.content.length > 30 ? "..." : "")
-      : "New Chat";
-
-    if (activeChatId) {
-      setChats(
-        chats.map((c) =>
-          c.id === activeChatId
-            ? { ...c, messages: updatedMessages, title }
-            : c,
-        ),
-      );
-    } else {
-      const newChat = {
-        id: generateId(),
-        title,
-        messages: updatedMessages,
-        timestamp: Date.now(),
-      };
-      setChats([newChat, ...chats]);
-      setActiveChatId(newChat.id);
-    }
-  };
-
-  const handleSendMessage = async () => {
-    const userMessage = inputValue.trim();
+  const handleSendMessage = async (question = inputValue) => {
+    const userMessage = question.trim();
     if (!userMessage || isLoading) return;
 
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     const userMsg = {
-      id: generateId(),
+      id: crypto.randomUUID(),
       role: "user",
       content: userMessage,
-      timestamp: Date.now(),
     };
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
+    const aiMessageId = crypto.randomUUID();
+
+    setMessages((currentMessages) => [...currentMessages, userMsg]);
     setInputValue("");
     setIsLoading(true);
 
     try {
-      const response = await fetch("/chat", {
+      const response = await fetch(`${API_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: userMessage }),
+        signal: controller.signal,
       });
 
-      if (!response.ok)
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`Chat request failed with status ${response.status}.`);
+      }
+      if (!response.body) {
+        throw new Error("The chat response stream is unavailable.");
+      }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      let aiResponse = "";
-      let aiMessageId = generateId();
-
-      setMessages((prev) => [
-        ...prev,
-        { id: aiMessageId, role: "ai", content: "", timestamp: Date.now() },
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        { id: aiMessageId, role: "ai", content: "" },
       ]);
 
-      if (reader) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let aiResponse = "";
+
+      try {
         while (true) {
           const { done, value } = await reader.read();
+          if (controller.signal.aborted) return;
           if (done) break;
+
           aiResponse += decoder.decode(value, { stream: true });
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMessageId ? { ...msg, content: aiResponse } : msg,
+          setMessages((currentMessages) =>
+            currentMessages.map((message) =>
+              message.id === aiMessageId
+                ? { ...message, content: aiResponse }
+                : message,
             ),
           );
         }
+
+        aiResponse += decoder.decode();
+        setMessages((currentMessages) =>
+          currentMessages.map((message) =>
+            message.id === aiMessageId
+              ? { ...message, content: aiResponse }
+              : message,
+          ),
+        );
+      } finally {
+        reader.releaseLock();
       }
-      saveCurrentChat([
-        ...newMessages,
-        {
-          id: aiMessageId,
-          role: "ai",
-          content: aiResponse,
-          timestamp: Date.now(),
-        },
-      ]);
     } catch (error) {
-      setMessages((prev) => [
-        ...prev,
+      if (controller.signal.aborted || error?.name === "AbortError") return;
+      console.error("Chat request failed:", error);
+      setMessages((currentMessages) => [
+        ...currentMessages,
         {
-          id: generateId(),
+          id: crypto.randomUUID(),
           role: "ai",
-          content: "Error processing request.",
-          timestamp: Date.now(),
+          content:
+            "Sorry, we couldn't send your message. Please try again.",
           isError: true,
         },
       ]);
     } finally {
-      setIsLoading(false);
+      if (requestControllerRef.current === controller) {
+        requestControllerRef.current = null;
+        setIsLoading(false);
+      }
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
       handleSendMessage();
     }
   };
 
   return (
-    <div className="chat-page">
-      <div
-        className={`sidebar-overlay ${sidebarOpen ? "visible" : ""}`}
-        onClick={() => setSidebarOpen(false)}
-      ></div>
+    <main className="support-chat">
+      <header className="support-header">
+        <a className="support-brand" href="/" aria-label="Support home">
+          <span className="support-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M8 16.5 13.2 22 24 10"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="support-brand-name">Customer care</span>
+        </a>
 
-      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-header">
-          <h2>Support AI</h2>
-          <button className="new-chat-btn" onClick={handleNewChat}>
-            <i className="fa-solid fa-plus" style={{ marginRight: "8px" }}></i>
-            New Chat
+        {messages.length > 0 && (
+          <button
+            className="conversation-reset"
+            type="button"
+            onClick={handleNewConversation}
+          >
+            Start over
           </button>
-        </div>
+        )}
+      </header>
 
-        <div className="chat-history">
-          <div className="chat-history-title">Recent Chats</div>
-          {chats.length === 0 ? (
-            <div className="empty-chats">No conversations yet.</div>
-          ) : (
-            chats.map((chat) => (
-              <div
-                key={chat.id}
-                className={`chat-item ${activeChatId === chat.id ? "active" : ""}`}
-                onClick={() => handleSelectChat(chat.id)}
-              >
-                <span className="chat-item-title">{chat.title}</span>
+      <section className="conversation-panel" aria-label="Support conversation">
+        {messages.length === 0 ? (
+          <div className="conversation-welcome">
+            <span className="welcome-eyebrow">HERE TO HELP</span>
+            <h1>What can we help<br className="welcome-break" /> you with?</h1>
+            <p>
+              Ask us about an order, a return, or your account. We’ll help you
+              find the next step.
+            </p>
+
+            <div className="suggested-questions" aria-label="Common questions">
+              {suggestedQuestions.map((question) => (
                 <button
-                  className="chat-item-delete"
-                  onClick={(e) => handleDeleteChat(e, chat.id)}
+                  className="suggestion-button"
+                  key={question}
+                  type="button"
+                  onClick={() => {
+                    setInputValue(question);
+                    inputRef.current?.focus();
+                  }}
                 >
-                  <i className="fa-solid fa-trash-can"></i>
+                  <span>{question}</span>
+                  <span className="suggestion-arrow" aria-hidden="true">
+                    &rarr;
+                  </span>
                 </button>
-              </div>
-            ))
-          )}
-        </div>
-      </aside>
-
-      <main className="chat-main">
-        <header className="chat-header">
-          <div className="chat-header-title">
-            <button
-              className="menu-toggle"
-              onClick={() => setSidebarOpen(true)}
-            >
-              <i className="fa-solid fa-bars"></i>
-            </button>
-            <h2>Chat</h2>
+              ))}
+            </div>
           </div>
-        </header>
-
-        <div className="messages-container">
-          {messages.length === 0 ? (
-            <div className="welcome-message">
-              <div className="welcome-icon">
-                <i
-                  className="fa-solid fa-robot"
-                  style={{ fontSize: "40px" }}
-                ></i>
-              </div>
-              <h3>Welcome to Support AI</h3>
-              <p>
-                Need support? Ask me anything about tickets or service issues,
-                and I’ll guide you step by step..
-              </p>
-            </div>
-          ) : (
-            messages.map((message) => (
-              <div key={message.id} className={`message ${message.role}`}>
-                <div className="message-bubble">{message.content}</div>
-                <div className="message-timestamp">
-                  {formatTimestamp(message.timestamp)}
+        ) : (
+          <div className="conversation-messages" aria-live="polite">
+            {messages.map((message) => (
+              <article
+                className={`conversation-message ${message.role}${message.isError ? " message-error" : ""}`}
+                key={message.id}
+              >
+                {message.role === "ai" && (
+                  <div className="message-author">
+                    <span className="message-author-mark" aria-hidden="true">
+                      C
+                    </span>
+                    <span>Customer care</span>
+                  </div>
+                )}
+                <div
+                  className="message-content"
+                  role={message.isError ? "alert" : undefined}
+                >
+                  {renderMessageContent(message.content, message.role)}
                 </div>
-              </div>
-            ))
-          )}
-          {isLoading && (
-            <div className="message ai">
-              <div className="typing-indicator">
-                <span className="typing-dot"></span>
-                <span className="typing-dot"></span>
-                <span className="typing-dot"></span>
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef}></div>
-        </div>
+              </article>
+            ))}
 
-        <div className="input-area">
-          <div className="input-container">
-            <textarea
-              ref={inputRef}
-              className="message-input"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Type your message..."
-              rows={1}
-              disabled={isLoading}
-            />
+            {isLoading && (
+              <div className="response-loading" role="status">
+                <span className="loading-indicator" aria-hidden="true" />
+                Finding an answer
+              </div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+        )}
+
+        <form
+          className="composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSendMessage();
+          }}
+        >
+          <label className="visually-hidden" htmlFor="support-question">
+            Your message
+          </label>
+          <textarea
+            id="support-question"
+            ref={inputRef}
+            className="message-input"
+            value={inputValue}
+            onChange={(event) => setInputValue(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Write your message..."
+            rows={1}
+            maxLength={1500}
+            disabled={isLoading}
+          />
+          <div className="composer-footer">
+            <span className="composer-hint">Press Enter to send</span>
             <button
-              className="send-btn"
-              onClick={handleSendMessage}
+              className="send-button"
+              type="submit"
+              aria-label="Send message"
               disabled={!inputValue.trim() || isLoading}
             >
-              <i className="fa-solid fa-paper-plane"></i>
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M3.5 10h12m-5-5 5 5-5 5"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
           </div>
-        </div>
-      </main>
-    </div>
+        </form>
+
+        <p className="conversation-note">
+          Replies are based on the information available in our help center.
+        </p>
+      </section>
+    </main>
   );
 }
