@@ -5,7 +5,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
 
 const suggestedQuestions = [
   "How do I track my order?",
-  "How do I return an item?",
+  "How do I return an Product?",
   "How do I update my account details?",
 ];
 
@@ -18,13 +18,15 @@ const renderMessageContent = (content, role) => {
     .map((line, lineIndex) => (
       <span key={lineIndex}>
         {lineIndex > 0 && <br />}
-        {line.split(/(\*\*[^*]+\*\*)/g).map((part, partIndex) =>
-          part.startsWith("**") && part.endsWith("**") ? (
-            <strong key={partIndex}>{part.slice(2, -2)}</strong>
-          ) : (
-            part
-          ),
-        )}
+        {line
+          .split(/(\*\*[^*]+\*\*)/g)
+          .map((part, partIndex) =>
+            part.startsWith("**") && part.endsWith("**") ? (
+              <strong key={partIndex}>{part.slice(2, -2)}</strong>
+            ) : (
+              part
+            ),
+          )}
       </span>
     ));
 };
@@ -136,7 +138,6 @@ export default function ChatPage() {
       if (!aiResponse.trim()) {
         throw new Error("The assistant returned an empty response.");
       }
-
     } catch (error) {
       if (controller.signal.aborted || error?.name === "AbortError") return;
       console.error("Chat request failed:", error);
@@ -203,7 +204,10 @@ export default function ChatPage() {
         {messages.length === 0 ? (
           <div className="conversation-welcome">
             <span className="welcome-eyebrow">HERE TO HELP</span>
-            <h1>What can we help<br className="welcome-break" /> you with?</h1>
+            <h1>
+              What can we help
+              <br className="welcome-break" /> you with?
+            </h1>
             <p>
               Ask us about an order, a return, or your account. We’ll help you
               find the next step.
