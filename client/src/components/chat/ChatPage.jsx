@@ -82,20 +82,42 @@ export default function ChatPage() {
       });
 
       if (!response.ok) {
-        throw new Error(`Chat request failed with status ${response.status}.`);
+        let detail = `Request failed (${response.status}).`;
+        try {
+          const errorBody = await response.json();
+          if (typeof errorBody.detail === "string") detail = errorBody.detail;
+        } catch {
+          // Keep the HTTP status as the diagnostic when the response is not JSON.
+        }
+        throw new Error(detail);
       }
       if (!response.body) {
         throw new Error("The chat response stream is unavailable.");
       }
 
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        { id: aiMessageId, role: "ai", content: "" },
-      ]);
-
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let aiResponse = "";
+      const appendAssistantText = (text) => {
+        if (!text) return;
+        aiResponse += text;
+        setMessages((currentMessages) => {
+          const hasAssistantMessage = currentMessages.some(
+            (message) => message.id === aiMessageId,
+          );
+          if (!hasAssistantMessage) {
+            return [
+              ...currentMessages,
+              { id: aiMessageId, role: "ai", content: aiResponse },
+            ];
+          }
+          return currentMessages.map((message) =>
+            message.id === aiMessageId
+              ? { ...message, content: aiResponse }
+              : message,
+          );
+        });
+      };
 
       try {
         while (true) {
@@ -103,40 +125,36 @@ export default function ChatPage() {
           if (controller.signal.aborted) return;
           if (done) break;
 
-          aiResponse += decoder.decode(value, { stream: true });
-          setMessages((currentMessages) =>
-            currentMessages.map((message) =>
-              message.id === aiMessageId
-                ? { ...message, content: aiResponse }
-                : message,
-            ),
-          );
+          appendAssistantText(decoder.decode(value, { stream: true }));
         }
 
-        aiResponse += decoder.decode();
-        setMessages((currentMessages) =>
-          currentMessages.map((message) =>
-            message.id === aiMessageId
-              ? { ...message, content: aiResponse }
-              : message,
-          ),
-        );
+        appendAssistantText(decoder.decode());
       } finally {
         reader.releaseLock();
       }
+
+      if (!aiResponse.trim()) {
+        throw new Error("The assistant returned an empty response.");
+      }
+
     } catch (error) {
       if (controller.signal.aborted || error?.name === "AbortError") return;
       console.error("Chat request failed:", error);
-      setMessages((currentMessages) => [
-        ...currentMessages,
-        {
-          id: crypto.randomUUID(),
-          role: "ai",
-          content:
-            "Sorry, we couldn't send your message. Please try again.",
-          isError: true,
-        },
-      ]);
+      setMessages((currentMessages) => {
+        const messagesWithoutEmptyResponse = currentMessages.filter(
+          (message) =>
+            message.id !== aiMessageId || message.content.trim() !== "",
+        );
+        return [
+          ...messagesWithoutEmptyResponse,
+          {
+            id: crypto.randomUUID(),
+            role: "ai",
+            content: `${error.message || "The support service is unavailable."} Please try again.`,
+            isError: true,
+          },
+        ];
+      });
     } finally {
       if (requestControllerRef.current === controller) {
         requestControllerRef.current = null;

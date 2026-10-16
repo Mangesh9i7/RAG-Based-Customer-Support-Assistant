@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path
 from typing import Annotated
@@ -12,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, StringConstraints
 from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.concurrency import run_in_threadpool
 from src.graph import app as rag_chain
 
 logger = logging.getLogger(__name__)
@@ -126,6 +128,7 @@ class Query(BaseModel):
 
 @api.post("/chat")
 async def chat(query: Query, request: Request):
+    request_id = uuid.uuid4().hex[:12]
     client_ip = request.client.host if request.client else "unknown"
     now = time.monotonic()
     with _rate_limit_lock:
@@ -162,11 +165,38 @@ async def chat(query: Query, request: Request):
             headers={"Retry-After": "5"},
         )
 
+    chunks = iter(())
+    try:
+        chunks = iter(rag_chain.stream(query.question))
+        first_chunk = await run_in_threadpool(_next_nonempty_chunk, chunks)
+    except Exception as error:
+        _generation_slots.release()
+        logger.exception(
+            "Chat generation failed before streaming (request_id=%s).", request_id
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"The assistant service could not complete your request. Reference: {request_id}",
+        ) from error
+
+    if first_chunk is None:
+        _generation_slots.release()
+        logger.error("Chat generation returned no output (request_id=%s).", request_id)
+        raise HTTPException(
+            status_code=502,
+            detail=f"The assistant returned no response. Reference: {request_id}",
+        )
+
     def stream():
         try:
-            yield from rag_chain.stream(query.question)
+            yield first_chunk
+            for chunk in chunks:
+                if chunk:
+                    yield chunk
         except Exception:
-            logger.exception("Chat generation failed.")
+            logger.exception(
+                "Chat generation failed during streaming (request_id=%s).", request_id
+            )
             raise
         finally:
             _generation_slots.release()
@@ -177,8 +207,16 @@ async def chat(query: Query, request: Request):
         headers={
             "Cache-Control": "no-cache, no-transform",
             "X-Content-Type-Options": "nosniff",
+            "X-Request-ID": request_id,
         },
     )
+
+
+def _next_nonempty_chunk(chunks):
+    for chunk in chunks:
+        if chunk:
+            return chunk
+    return None
 
 
 @api.get("/health")
